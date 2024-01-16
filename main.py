@@ -6,7 +6,7 @@ import sys
 import time
 from tempfile import TemporaryDirectory
 from textwrap import fill
-from zipfile import ZipFile, BadZipFile
+from zipfile import ZipFile, BadZipFile, ZipExtFile
 
 
 from pydub import AudioSegment
@@ -40,26 +40,35 @@ def get_pptx_files(dir: str):
         logging.error(f"The provided path is not a directory: {dir}")
         return
 
+    pptx_files = glob.glob(os.path.join(dir, "*.pptx"))
+    return [os.path.abspath(file) for file in pptx_files]
+
+
+def to_wav(file: ZipExtFile, dir: str) -> str:
     try:
-        pptx_files = glob.glob(os.path.join(dir, "*.pptx"))
-        return [os.path.abspath(file) for file in pptx_files]
+        audio_data = io.BytesIO(file.read())
 
-    except Exception as e:
-        logging.error(f"An error occurred: {e}")
-        return
+        # Get format from file extension
+        file_format = os.path.splitext(file.name)[1].strip(".")
+        audio: AudioSegment = AudioSegment.from_file(audio_data, format=file_format)
 
-
-def audio_to_wav(file, format, dir):
-    with io.BytesIO(file.read()) as audio_data:
-        audio = AudioSegment.from_file(audio_data, format=format)
+        # Construct .wav filename
         wav_file_name = os.path.splitext(os.path.basename(file.name))[0] + ".wav"
         wav_file_path = os.path.join(dir, wav_file_name)
+
+        # Export audio as .wav file
         audio.export(wav_file_path, format="wav")
+        logging.info(f"Converted {file.name} to {wav_file_path}")
 
         return wav_file_path
 
+    except Exception as e:
+        logging.error(f"Failed to convert {file.name} to .wav: {e}")
+        return
 
-def transcribe_audio_files(path: str):
+
+def transcribe_pptx(path: str):
+    # Ensure path to pptx is valid
     if not os.path.isfile(path):
         logging.error(f"The file {path} does not exist.")
         return
@@ -80,7 +89,7 @@ def transcribe_audio_files(path: str):
             )
 
             if not audio_files:
-                logging.info("No audio files found in the PowerPoint file.")
+                logging.warning("No audio files found in the PowerPoint file.")
                 return
 
             # Extract audio files to a temporary directory
@@ -88,24 +97,32 @@ def transcribe_audio_files(path: str):
                 transcription = ""
                 for i, file in enumerate(audio_files, start=1):
                     with zip.open(file) as audio_file:
-                        if file.endswith(".m4a"):
+                        # Convert non .wav files to .wav
+                        if not file.endswith(".wav"):
                             logging.info(f"Converting {file} to .wav")
-                            wav_file_path = audio_to_wav(audio_file, "m4a", temp_dir)
+                            wav_file_path = to_wav(audio_file, temp_dir)
                         else:
                             wav_file_path = zip.extract(file, temp_dir)
 
+                        # Skip if error converting
+                        if not wav_file_path:
+                            continue
+
+                        # Build formatted transcription
                         identifier = f"Slide {i}: "
                         text = transcribe(wav_file_path)
                         newline = "\n\n"
 
-                        transcription += identifier + text + newline
+                        transcription += identifier + fill(text, width=100) + newline
 
             return transcription
 
     except BadZipFile:
         logging.error("The provided file is not a valid zip file.")
+        return
     except Exception as e:
         logging.error(f"An error occurred: {e}")
+        return
 
 
 def transcribe(file_path):
@@ -129,7 +146,7 @@ def transcribe(file_path):
 
     elapsed_time = time.time() - start_time
 
-    # Inform the user that the transcription has finished and show the elapsed time
+    # Show elapsed transcription time
     logging.info(
         f"Finished transcribing '{base_name}'. Duration: {elapsed_time:.2f} seconds."
     )
@@ -149,8 +166,7 @@ def save_transcription(pptx_name, transcription, dir):
 
         # Write the transcription to the file
         with open(file_path, "w", encoding="utf8") as file:
-            # TODO: Stop fill from removing the newlines to separate slides
-            file.write(fill(transcription, width=100))
+            file.write(transcription)
 
         logging.info(f"Saved transcription of '{pptx_name}' to '{file_path}'")
 
@@ -158,9 +174,13 @@ def save_transcription(pptx_name, transcription, dir):
         logging.error(
             f"Failed to create/access directory '{dir}' or write to file '{file_path}': {e}"
         )
+        return
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        return
 
 
-if __name__ == "__main__":
+def main():
     dir = "./powerpoints"
     output_dir = "./transcriptions"
     pptx_files = get_pptx_files(dir)
@@ -170,12 +190,20 @@ if __name__ == "__main__":
         sys.exit(1)
 
     for f in pptx_files:
-        # Get name of the actual ppt presentation
-        pptx_name = os.path.basename(f).split(".")[0]
-        logging.info(f"Transcribing {pptx_name}...")
+        # Get name of ppt presentation
+        pptx_name = os.path.splitext(os.path.basename(f))[0]
+        logging.info(f"Processing {pptx_name}...")
 
         # Transcribe it
-        transcription = transcribe_audio_files(f)
+        transcription = transcribe_pptx(f)
+
+        # Skip if unable to transcribe
+        if not transcription:
+            continue
 
         # Save the combined text to a folder in the output directory named after the ppt presentation
         save_transcription(pptx_name, transcription, output_dir)
+
+
+if __name__ == "__main__":
+    main()
