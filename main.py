@@ -23,17 +23,13 @@ from transformers import pipeline
 logger = logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)-8s %(message)s",
-    handlers=[RichHandler()],
+    handlers=[RichHandler(show_time=False)],
 )
 
 # Set up arg parser
 parser = argparse.ArgumentParser(
     description="Automatic transcriptions of PowerPoint presentation embedded audio"
 )
-
-# Set up console for pretty printing
-console = Console(log_time=False)
-
 
 # Build speech to text pipe
 pipe = pipeline(
@@ -59,9 +55,42 @@ parser.add_argument(
 )
 
 
+def display_table(files: List[str]) -> None:
+    """
+    Displays a table with the name, creation time, and size of each file in the provided list.
+
+    Args:
+    files (List[str]): A list of file paths for which details will be displayed.
+
+    Returns:
+    None: This function does not return anything.
+
+    Note:
+    This function assumes that the file paths provided in the list are valid and accessible.
+    It does not handle exceptions related to invalid file paths or inaccessible files.
+    """
+    # Set up console for pretty printing
+    console = Console(log_time=False)
+    
+    # Build table outline
+    table = Table()
+    table.add_column("Name", justify="left", style="cyan", no_wrap=True)
+    table.add_column("Created", justify="left", style="green")
+    table.add_column("Size", style="magenta")
+
+    # Populate table
+    for f in files:
+        name = os.path.splitext(os.path.basename(f))[0]
+        created = time.ctime(os.path.getctime(f))
+        size = f"{os.path.getsize(f) / (1024 * 1024):.2f} mb"
+        table.add_row(name, created, size)
+
+    console.log("PowerPoints Found: ", table)
+
+
 def get_pptx_files(dir: str) -> List[str]:
     """
-    Finds and prints all PowerPoint (.pptx) files in the given directory.
+    Finds all PowerPoint (.pptx) files in the given directory.
 
     Args:
     directory (str): The directory to search for PowerPoint files.
@@ -81,20 +110,7 @@ def get_pptx_files(dir: str) -> List[str]:
     if not pptx_files:
         raise FileNotFoundError(f"No .pptx files found in {dir}")
 
-    # Build table outline
-    table = Table()
-    table.add_column("Name", justify="left", style="cyan", no_wrap=True)
-    table.add_column("Size", style="magenta")
-    table.add_column("Created", justify="left", style="green")
-
-    # Populate table
-    for f in pptx_files:
-        name = os.path.splitext(os.path.basename(f))[0]
-        size = f"{os.path.getsize(f) / (1024 * 1024):.2f} mb"
-        created = time.ctime(os.path.getctime(f))
-        table.add_row(name, size, created)
-
-    console.log("PowerPoints Found: ", table)
+    display_table(pptx_files)
 
     return pptx_files
 
@@ -160,10 +176,6 @@ def get_audio_files_from_zip(zip: ZipFile) -> List[str]:
 
 
 def transcribe_pptx(path: str):
-    # Ensure path to pptx is valid
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"The file {path} does not exist.")
-
     try:
         with ZipFile(path, "r") as zip:
             audio_files = get_audio_files_from_zip(zip)
@@ -213,7 +225,6 @@ def transcribe(file_path: str) -> str:
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             TimeElapsedColumn(),
-            console=console,
         ) as progress:
             progress.add_task(f"[green]Transcribing {base_name}...", total=None)
 
