@@ -1,12 +1,12 @@
-import argparse
 import glob
 import logging
 import os
 import time
+from argparse import ArgumentParser, BooleanOptionalAction
 from io import BytesIO
 from tempfile import TemporaryDirectory
 from textwrap import fill
-from typing import List
+from typing import List, Optional
 from zipfile import BadZipFile, ZipExtFile, ZipFile
 
 from pydub import AudioSegment
@@ -15,29 +15,20 @@ from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-import torch
-from transformers import pipeline
-
+from torch import float16
+from transformers import pipeline, Pipeline
 
 # Set up logger
 logger = logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)-8s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[RichHandler(show_time=False)],
 )
 
 # Set up arg parser
-parser = argparse.ArgumentParser(
+parser = ArgumentParser(
     description="Automatic transcriptions of PowerPoint presentation embedded audio"
-)
-
-# Build speech to text pipe
-pipe = pipeline(
-    "automatic-speech-recognition",
-    model="openai/whisper-large-v3",
-    torch_dtype=torch.float16,
-    device="mps",
-    model_kwargs={"attn_implementation": "sdpa"},
 )
 
 # Define CLI inputs
@@ -53,6 +44,42 @@ parser.add_argument(
     type=str,
     help="Directory where the transcriptions will be saved.",
 )
+
+parser.add_argument(
+    "--recursive",
+    required=False,
+    action=BooleanOptionalAction,
+    help="Specify if you want to recursively search dir",
+)
+
+
+def get_pptx_files(dir: str, recursive: bool) -> List[str]:
+    """
+    Finds all PowerPoint (.pptx) files in the given directory.
+
+    Args:
+    directory (str): The directory to search for PowerPoint files.
+    recursive (bool): Specify if dir should recursively be searched
+
+    Returns:
+    List[str]: A list of paths to the PowerPoint files found.
+
+    Raises:
+    NotADirectoryError: If the provided path is not a directory.
+    FileNotFoundError: If no .pptx files are found in the directory.
+    """
+    if not os.path.isdir(dir):
+        raise NotADirectoryError(f"The provided path is not a directory: {dir}")
+
+    search_pattern = "**/*.pptx" if recursive else "*.pptx"
+    pptx_files = glob.glob(os.path.join(dir, search_pattern), recursive=recursive)
+
+    if not pptx_files:
+        raise FileNotFoundError(f"No .pptx files found in {dir}")
+
+    display_table(pptx_files)
+
+    return pptx_files
 
 
 def display_table(files: List[str]) -> None:
@@ -71,7 +98,7 @@ def display_table(files: List[str]) -> None:
     """
     # Set up console for pretty printing
     console = Console(log_time=False)
-    
+
     # Build table outline
     table = Table()
     table.add_column("Name", justify="left", style="cyan", no_wrap=True)
@@ -88,33 +115,6 @@ def display_table(files: List[str]) -> None:
     console.log("PowerPoints Found: ", table)
 
 
-def get_pptx_files(dir: str) -> List[str]:
-    """
-    Finds all PowerPoint (.pptx) files in the given directory.
-
-    Args:
-    directory (str): The directory to search for PowerPoint files.
-
-    Returns:
-    List[str]: A list of paths to the PowerPoint files found.
-
-    Raises:
-    NotADirectoryError: If the provided path is not a directory.
-    FileNotFoundError: If no .pptx files are found in the directory.
-    """
-    if not os.path.isdir(dir):
-        raise NotADirectoryError(f"The provided path is not a directory: {dir}")
-
-    pptx_files = glob.glob(os.path.join(dir, "*.pptx"))
-
-    if not pptx_files:
-        raise FileNotFoundError(f"No .pptx files found in {dir}")
-
-    display_table(pptx_files)
-
-    return pptx_files
-
-
 def to_wav(file: ZipExtFile, dir: str) -> str:
     """
     Converts an audio file from a zip archive to WAV format.
@@ -127,11 +127,10 @@ def to_wav(file: ZipExtFile, dir: str) -> str:
     str: The path to the converted .wav file.
 
     Raises:
-    FileNotFoundError: If the directory to save to does not exist.
-    Any other exceptions related to audio file handling.
+    Any exceptions related to audio file handling.
     """
-    if not os.path.isdir(dir):
-        raise FileNotFoundError(f"Directory not found: {dir}")
+    # Let user know conversion is happening
+    logging.info(f"Converting {file.name} to .wav")
 
     audio_data = BytesIO(file.read())
 
@@ -175,80 +174,122 @@ def get_audio_files_from_zip(zip: ZipFile) -> List[str]:
     return audio_files
 
 
-def transcribe_pptx(path: str):
+def transcribe_pptx(path: str, pipe: Pipeline) -> Optional[str]:
+    """
+    Transcribes audio files embedded in a PowerPoint (.pptx) file.
+
+    Args:
+    path (str): Path to the PowerPoint file.
+    pipe (Pipeline): The pipeline to use whisper
+
+    Returns:
+    Optional[str]: The combined transcription of all audio files, or None if no audio files are found.
+
+    Raises:
+    BadZipFile: If the PowerPoint file is not a valid zip file.
+    Exception: For any other issues encountered during processing.
+    """
     try:
-        with ZipFile(path, "r") as zip:
-            audio_files = get_audio_files_from_zip(zip)
+        # Open zip file, extract audio files
+        zip = ZipFile(path, "r")
+        audio_files = get_audio_files_from_zip(zip)
 
-            if not audio_files:
-                logging.warning("No audio files found in the PowerPoint file.")
-                return None
+        if not audio_files:
+            logging.warning("No audio files found in the PowerPoint file.")
+            return None
 
-            # Extract audio files to a temporary directory
-            with TemporaryDirectory() as temp_dir:
-                transcription = ""
-                for i, file in enumerate(audio_files, start=1):
-                    with zip.open(file) as audio_file:
-                        # Convert non .wav files to .wav
-                        if not file.endswith(".wav"):
-                            logging.info(f"Converting {file} to .wav")
+        # Extract audio files to a temporary directory
+        with TemporaryDirectory() as temp_dir:
+            transcription = ""
+
+            # Open audio files
+            for i, f in enumerate(audio_files, start=1):
+                with zip.open(f, "r") as audio_file:
+                    try:
+                        # Convert non .wav files to .wav in temp dir
+                        if not f.endswith(".wav"):
                             wav_file_path = to_wav(audio_file, temp_dir)
                         else:
-                            wav_file_path = zip.extract(file, temp_dir)
-
-                        # Skip if error converting
-                        if not wav_file_path:
-                            continue
+                            wav_file_path = zip.extract(f, temp_dir)
 
                         # Build formatted transcription
                         identifier = f"Slide {i}: "
-                        text = transcribe(wav_file_path)
+                        text = transcribe(wav_file_path, pipe)
                         newline = "\n\n"
 
                         transcription += identifier + fill(text, width=100) + newline
 
-            return transcription
+                    except Exception as e:
+                        logging.error(f"Error with audio file: {e}. Skipping")
+                        continue
+
+        return transcription
 
     except BadZipFile:
         raise
     except Exception:
         raise
+    finally:
+        zip.close()
 
 
-def transcribe(file_path: str) -> str:
+def transcribe(file_path: str, pipe: Pipeline) -> str:
+    """
+    Transcribes audio content from a given file.
+
+    Args:
+    file_path (str): The path to the audio file to be transcribed.
+    pipe (Pipeline): The pipeline to use whisper
+
+    Returns:
+    str: The transcribed text from the audio file
+
+    Raises:
+    Any exceptions related to transcription.
+    """
     base_name = os.path.basename(file_path)
-
     start_time = time.time()
 
-    try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-        ) as progress:
-            progress.add_task(f"[green]Transcribing {base_name}...", total=None)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+    ) as progress:
+        progress.add_task(f"[green]Transcribing {base_name}...", total=None)
 
-            output = pipe(
-                file_path,
-                chunk_length_s=30,
-                batch_size=4,
-                return_timestamps=False,
-            )
-
-        elapsed_time = time.time() - start_time
-
-        logging.info(
-            f"Finished transcribing '{base_name}'. Duration: {elapsed_time:.2f} seconds."
+        output = pipe(
+            file_path,
+            chunk_length_s=30,
+            batch_size=4,
+            return_timestamps=False,
         )
 
-        return output["text"]
-    except Exception as e:
-        raise Exception(f"An error occurred during transcription: {e}")
+    elapsed_time = time.time() - start_time
+
+    logging.info(
+        f"Finished transcribing '{base_name}'. Duration: {elapsed_time:.2f} seconds."
+    )
+
+    return output["text"]
 
 
-def save_transcription(dir, pptx_name, transcription):
+def save_transcription(dir: str, pptx_name: str, transcription: str) -> None:
+    """
+    Saves the provided transcription text to a file.
+
+    Args:
+    dir (str): The directory where the transcription file will be saved.
+    pptx_name (str): The name of the PowerPoint file, which will be used as the base name for the transcription file.
+    transcription (str): The transcription text to be saved.
+
+    Returns:
+    Optional[str]: The path to the saved transcription file, or None if the transcription is empty or an error occurs.
+
+    Raises:
+    OSError: If there's an issue with creating the directory or writing to the file.
+    Exception: For any other issues encountered during the file writing process.
+    """
     if not transcription:
-        logging.warning(f"No transcription found for '{pptx_name}'. Skipping.")
         return
 
     try:
@@ -260,28 +301,38 @@ def save_transcription(dir, pptx_name, transcription):
         with open(file_path, "w", encoding="utf8") as file:
             file.write(transcription)
 
-        logging.info(f"Saved transcription of '{pptx_name}' to '{file_path}'")
+        logging.info(f"Saved transcription of '{pptx_name}' to '{file_path}'\n")
 
     except OSError as e:
-        logging.error(
+        raise OSError(
             f"Failed to create/access directory '{dir}' or write to file '{file_path}': {e}"
         )
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        raise Exception(f"An error occurred while saving the transcription: {e}")
 
 
 def main():
     args = parser.parse_args()
+
     try:
-        pptx_files = get_pptx_files(args.dir)
+        pptx_files = get_pptx_files(args.dir, args.recursive)
+
+        # Build speech to text pipe only if pptx files found
+        pipe = pipeline(
+            "automatic-speech-recognition",
+            model="openai/whisper-large-v3",
+            torch_dtype=float16,
+            device="mps",
+            model_kwargs={"attn_implementation": "sdpa"},
+        )
 
         for f in pptx_files:
             # Get name of ppt presentation
             pptx_name = os.path.splitext(os.path.basename(f))[0]
-            logging.info(f"Processing {pptx_name}...")
+            logging.info(f"Processing '{pptx_name}'...")
 
             # Transcribe it
-            transcription = transcribe_pptx(f)
+            transcription = transcribe_pptx(f, pipe)
 
             # Save the combined text to a folder in the output directory named after the ppt presentation
             save_transcription(args.output_dir, pptx_name, transcription)
