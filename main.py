@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import time
+import xml.etree.ElementTree as ET
 from argparse import ArgumentParser, BooleanOptionalAction
 from io import BytesIO
 from tempfile import TemporaryDirectory
@@ -15,7 +16,7 @@ from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from torch import float16
+# from torch import float16
 from transformers import pipeline, Pipeline
 
 # Set up logger
@@ -214,7 +215,7 @@ def transcribe_pptx(path: str, pipe: Pipeline) -> Optional[str]:
 
                         # Build formatted transcription
                         identifier = f"Slide {i}: "
-                        text = transcribe(wav_file_path, pipe)
+                        text = "transcribe(wav_file_path, pipe)"
                         newline = "\n\n"
 
                         transcription += identifier + fill(text, width=100) + newline
@@ -311,6 +312,44 @@ def save_transcription(dir: str, pptx_name: str, transcription: str) -> None:
         raise Exception(f"An error occurred while saving the transcription: {e}")
 
 
+def extract_pptx_text(xml_content: str) -> str:
+    # Parse the XML content
+    tree = ET.ElementTree(ET.fromstring(xml_content))
+
+    # Extract all text elements
+    text_elements = tree.findall(
+        ".//a:t",
+        namespaces={"a": "http://schemas.openxmlformats.org/drawingml/2006/main"},
+    )
+
+    # Concatenate the text from each element
+    slide_text = " ".join(
+        [elem.text for elem in text_elements if elem.text is not None]
+    )
+
+    return slide_text
+
+
+def get_images_from_zip():
+    ...
+
+
+def get_slides_from_zip():
+    ...
+
+
+def get_files_from_zip(zip: ZipFile):
+    files = zip.namelist()
+
+    for f in sorted(files):
+        print(f)
+
+    
+
+
+
+
+
 def main():
     args = parser.parse_args()
 
@@ -318,24 +357,55 @@ def main():
         pptx_files = get_pptx_files(args.dir, args.recursive)
 
         # Build speech to text pipe only if pptx files found
-        pipe = pipeline(
-            "automatic-speech-recognition",
-            model="openai/whisper-large-v3",
-            torch_dtype=float16,
-            device="mps",
-            model_kwargs={"attn_implementation": "sdpa"},
-        )
+        # pipe = pipeline(
+        #     "automatic-speech-recognition",
+        #     model="openai/whisper-large-v3",
+        #     torch_dtype=float16,
+        #     device="mps",
+        #     model_kwargs={"attn_implementation": "sdpa"},
+        # )
+        pipe = ""
 
         for f in pptx_files:
+            # Open zip file, extract audio files
+            zip = ZipFile(f, "r")
+            get_files_from_zip(zip)
+            break
+            # audio_files, images, slides = get_files_from_zip(zip)
+            # # images = get_images_from_zip(zip)
+            # # slides = get_slides_from_zip(zip)
+
+            # print(f)
+            # zip = ZipFile(f, "r")
+            # file_list = zip.namelist()
+            # for f in file_list:
+            #     print(f)
+            #     print()
+
+            # slides = sorted(
+            #     [
+            #         f
+            #         for f in file_list
+            #         if f.startswith("ppt/slides/slide") and f.endswith(".xml")
+            #     ]
+            # )
+
+            # for s in slides:
+            #     with zip.open(s, "r") as slide:
+            #         text = extract_pptx_text(slide.read())
+            #         print(text)
+            #         input()
+
             # Get name of ppt presentation
-            pptx_name = os.path.splitext(os.path.basename(f))[0]
-            logging.info(f"Processing '{pptx_name}'...")
+            # pptx_name = os.path.splitext(os.path.basename(f))[0]
+            # logging.info(f"Processing '{pptx_name}'...")
 
-            # Transcribe it
-            transcription = transcribe_pptx(f, pipe)
+            # # Transcribe it
+            # transcription = transcribe_pptx(f, pipe)
 
-            # Save the combined text to a folder in the output directory named after the ppt presentation
-            save_transcription(args.output_dir, pptx_name, transcription)
+            # # Save the combined text to a folder in the output directory named after the ppt presentation
+            # save_transcription(args.output_dir, pptx_name, transcription)
+
     except Exception as e:
         logging.error(e)
 
