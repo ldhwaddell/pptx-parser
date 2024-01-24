@@ -16,7 +16,7 @@ from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-# from torch import float16
+from torch import float16
 from transformers import pipeline, Pipeline
 
 # Set up logger
@@ -116,7 +116,7 @@ def display_table(files: List[str]) -> None:
     console.log("PowerPoints Found: ", table)
 
 
-def get_slide_path(rel_file: str) -> str:
+def format_slide_name(rel_file: str) -> str:
     """
     Extracts the slide path from the relationship file path.
 
@@ -125,7 +125,7 @@ def get_slide_path(rel_file: str) -> str:
     """
     _, tail = os.path.split(rel_file)
     name, _ = os.path.splitext(tail)
-    return f"ppt/slides/{name}"
+    return name
 
 
 def process_relationships(
@@ -149,15 +149,15 @@ def process_relationships(
         rel_type = rel.get("Type")
 
         if "relationships/audio" in rel_type:
-            target = rel.get("Target").replace("../", "ppt/slides/")
+            target = rel.get("Target").replace("../", "ppt/")
             slide_files[slide_path]["audio"] = target
 
         elif "relationships/image" in rel_type:
-            target = rel.get("Target").replace("../", "ppt/slides/")
+            target = rel.get("Target").replace("../", "ppt/")
             slide_files[slide_path]["images"].append(target)
 
 
-def get_content_files_from_zip(
+def get_content_file_paths_from_zip(
     zip_file: ZipFile,
 ) -> Dict[str, Dict[str, Optional[List[str]]]]:
     """
@@ -179,7 +179,7 @@ def get_content_files_from_zip(
 
     slide_files = {}
     for rel_file in (f for f in files if f.startswith(rels_dir)):
-        slide_path = get_slide_path(rel_file)
+        slide_path = f"ppt/slides/{format_slide_name(rel_file)}"
         slide_files[slide_path] = {"audio": None, "images": []}
         process_relationships(zip_file, rel_file, slide_files, slide_path)
 
@@ -344,60 +344,31 @@ def transcribe(file_path: str, pipe: Pipeline) -> str:
     return output["text"]
 
 
-def save_transcription(dir: str, pptx_name: str, transcription: str) -> None:
-    """
-    Saves the provided transcription text to a file.
+def parse_content_files(
+    zip_file: ZipFile,
+    content_files: Dict[str, Dict[str, Optional[List[str]]]],
+    pipe: Pipeline,
+) -> str:
+    for slide_path, content in content_files.items():
+        slide_name = format_slide_name(slide_path)
 
-    Args:
-    dir (str): The directory where the transcription file will be saved.
-    pptx_name (str): The name of the PowerPoint file, which will be used as the base name for the transcription file.
-    transcription (str): The transcription text to be saved.
+        audio_file_path = content["audio"]
 
-    Returns:
-    Optional[str]: The path to the saved transcription file, or None if the transcription is empty or an error occurs.
+        if audio_file_path:
+            with TemporaryDirectory() as temp_dir:
+                local_audio_path = os.path.join(
+                    temp_dir, os.path.basename(audio_file_path)
+                )
 
-    Raises:
-    OSError: If there's an issue with creating the directory or writing to the file.
-    Exception: For any other issues encountered during the file writing process.
-    """
-    if not transcription:
-        return
+                with zip_file.open(audio_file_path, "r") as audio_file, open(
+                    local_audio_path, "wb"
+                ) as out_file:
+                    out_file.write(audio_file.read())
+                    print(out_file)
 
-    try:
-        # Ensure the directory exists
-        os.makedirs(dir, exist_ok=True)
-        file_path = os.path.join(dir, f"{pptx_name}.txt")
-
-        # Write the transcription to the file
-        with open(file_path, "w", encoding="utf8") as file:
-            file.write(transcription)
-
-        logging.info(f"Saved transcription of '{pptx_name}' to '{file_path}'\n")
-
-    except OSError as e:
-        raise OSError(
-            f"Failed to create/access directory '{dir}' or write to file '{file_path}': {e}"
-        )
-    except Exception as e:
-        raise Exception(f"An error occurred while saving the transcription: {e}")
-
-
-def extract_pptx_text(xml_content: str) -> str:
-    # Parse the XML content
-    tree = ET.ElementTree(ET.fromstring(xml_content))
-
-    # Extract all text elements
-    text_elements = tree.findall(
-        ".//a:t",
-        namespaces={"a": "http://schemas.openxmlformats.org/drawingml/2006/main"},
-    )
-
-    # Concatenate the text from each element
-    slide_text = " ".join(
-        [elem.text for elem in text_elements if elem.text is not None]
-    )
-
-    return slide_text
+                transcription = transcribe(local_audio_path, pipe)
+                print(transcription)
+        break
 
 
 def main():
@@ -407,49 +378,25 @@ def main():
         pptx_files = get_pptx_files(args.dir, args.recursive)
 
         # Build speech to text pipe only if pptx files found
-        # pipe = pipeline(
-        #     "automatic-speech-recognition",
-        #     model="openai/whisper-large-v3",
-        #     torch_dtype=float16,
-        #     device="mps",
-        #     model_kwargs={"attn_implementation": "sdpa"},
-        # )
-        pipe = ""
+        pipe = pipeline(
+            "automatic-speech-recognition",
+            model="openai/whisper-tiny",
+            torch_dtype=float16,
+            device="mps",
+            model_kwargs={"attn_implementation": "sdpa"},
+        )
 
         for f in pptx_files:
-            # Open zip file, extract content
-            zip_file = ZipFile(f, "r")
-            content_files = get_content_files_from_zip(zip_file)
-            print(content_files)
-            break
-            # audio_files, images, slides = get_files_from_zip(zip)
-            # # images = get_images_from_zip(zip)
-            # # slides = get_slides_from_zip(zip)
-
-            # print(f)
-            # zip = ZipFile(f, "r")
-            # file_list = zip.namelist()
-            # for f in file_list:
-            #     print(f)
-            #     print()
-
-            # slides = sorted(
-            #     [
-            #         f
-            #         for f in file_list
-            #         if f.startswith("ppt/slides/slide") and f.endswith(".xml")
-            #     ]
-            # )
-
-            # for s in slides:
-            #     with zip.open(s, "r") as slide:
-            #         text = extract_pptx_text(slide.read())
-            #         print(text)
-            #         input()
-
             # Get name of ppt presentation
-            # pptx_name = os.path.splitext(os.path.basename(f))[0]
-            # logging.info(f"Processing '{pptx_name}'...")
+            pptx_name = os.path.splitext(os.path.basename(f))[0]
+            logging.info(f"Processing '{pptx_name}'...")
+
+            # Open zip file, get file locations of media, images, and slide'x'.xml files
+            zip_file = ZipFile(f, "r")
+            content_file_paths = get_content_file_paths_from_zip(zip_file)
+
+            slides_text = parse_content_files(zip_file, content_file_paths, pipe)
+            break
 
             # # Transcribe it
             # transcription = transcribe_pptx(f, pipe)
