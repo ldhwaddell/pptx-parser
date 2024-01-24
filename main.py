@@ -7,7 +7,7 @@ from argparse import ArgumentParser, BooleanOptionalAction
 from io import BytesIO
 from tempfile import TemporaryDirectory
 from textwrap import fill
-from typing import List, Optional
+from typing import List, Optional, Dict
 from zipfile import BadZipFile, ZipExtFile, ZipFile
 
 from pydub import AudioSegment
@@ -330,24 +330,74 @@ def extract_pptx_text(xml_content: str) -> str:
     return slide_text
 
 
-def get_images_from_zip():
-    ...
+def get_slide_path(rel_file: str) -> str:
+    """
+    Extracts the slide path from the relationship file path.
+
+    :param rel_file: The relationship file path.
+    :return: The slide path.
+    """
+    _, tail = os.path.split(rel_file)
+    name, _ = os.path.splitext(tail)
+    return f"ppt/slides/{name}"
 
 
-def get_slides_from_zip():
-    ...
+def process_relationships(
+    zip_file: ZipFile, rel_file: str, slide_files: Dict, slide_path: str
+) -> None:
+    """
+    Processes relationships within a PowerPoint relationship file.
+
+    :param zip_file: The ZipFile object.
+    :param rel_file: The relationship file path.
+    :param slide_files: The dictionary to store slide information.
+    :param slide_path: The path of the slide.
+    """
+    with zip_file.open(rel_file, "r") as file:
+        xml_content = file.read().decode("utf-8")
+        root = ET.fromstring(xml_content)
+        for rel in root.findall(
+            "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+        ):
+            rel_type = rel.get("Type")
+
+            if "relationships/audio" in rel_type:
+                target = rel.get("Target").replace("../", "ppt/slides/")
+                slide_files[slide_path]["audio"] = target
+
+            elif "relationships/image" in rel_type:
+                target = rel.get("Target").replace("../", "ppt/slides/")
+                slide_files[slide_path]["images"].append(target)
 
 
-def get_files_from_zip(zip: ZipFile):
-    files = zip.namelist()
+def get_content_files_from_zip(
+    zip_file: ZipFile,
+) -> Dict[str, Dict[str, Optional[List[str]]]]:
+    """
+    Extracts slide, audio, and image information from a PowerPoint ZIP file.
 
-    for f in sorted(files):
-        print(f)
+    :param zip_file: A ZipFile object representing the PowerPoint file.
+    :return: A dictionary mapping slide paths to their corresponding audio and image files.
+    :raises NotADirectoryError: If the required directory is not found in the zip file.
+    """
 
-    
+    rels_dir = "ppt/slides/_rels"
 
+    files = zip_file.namelist()
 
+    if not any(item.startswith(rels_dir) for item in files):
+        raise NotADirectoryError(
+            f"Unable to find '{rels_dir}' directory in {zip_file.filename}"
+        )
 
+    slide_files = {}
+    for rel_file in (f for f in files if f.startswith(rels_dir)):
+        slide_path = get_slide_path(rel_file)
+        if slide_path in files:
+            slide_files[slide_path] = {"audio": None, "images": []}
+            process_relationships(zip_file, rel_file, slide_files, slide_path)
+
+    return slide_files
 
 
 def main():
@@ -367,9 +417,10 @@ def main():
         pipe = ""
 
         for f in pptx_files:
-            # Open zip file, extract audio files
+            # Open zip file, extract content
             zip = ZipFile(f, "r")
-            get_files_from_zip(zip)
+            content_files = get_content_files_from_zip(zip)
+            print(content_files)
             break
             # audio_files, images, slides = get_files_from_zip(zip)
             # # images = get_images_from_zip(zip)
