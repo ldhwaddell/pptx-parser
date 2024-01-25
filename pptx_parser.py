@@ -336,6 +336,8 @@ def main():
 
     except Exception as e:
         logging.error(f"Error: {e}")
+    finally:
+        zip_file.close()
 
 
 if __name__ == "__main__":
