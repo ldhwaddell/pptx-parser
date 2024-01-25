@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import time
+import subprocess
 import xml.etree.ElementTree as ET
 from argparse import ArgumentParser, BooleanOptionalAction
 from io import BytesIO
@@ -304,7 +305,7 @@ def transcribe_pptx(path: str, pipe: Pipeline) -> Optional[str]:
         zip.close()
 
 
-def transcribe(file_path: str, pipe: Pipeline) -> str:
+def transcribe(audio: bytes, pipe: Pipeline) -> str:
     """
     Transcribes audio content from a given file.
 
@@ -318,7 +319,7 @@ def transcribe(file_path: str, pipe: Pipeline) -> str:
     Raises:
     Any exceptions related to transcription.
     """
-    base_name = os.path.basename(file_path)
+    # base_name = os.path.basename(file_path)
     start_time = time.time()
 
     with Progress(
@@ -326,10 +327,10 @@ def transcribe(file_path: str, pipe: Pipeline) -> str:
         TextColumn("[progress.description]{task.description}"),
         TimeElapsedColumn(),
     ) as progress:
-        progress.add_task(f"[green]Transcribing {base_name}...", total=None)
+        progress.add_task(f"[green]Transcribing...", total=None)
 
         output = pipe(
-            file_path,
+            audio,
             chunk_length_s=30,
             batch_size=4,
             return_timestamps=False,
@@ -337,11 +338,32 @@ def transcribe(file_path: str, pipe: Pipeline) -> str:
 
     elapsed_time = time.time() - start_time
 
-    logging.info(
-        f"Finished transcribing '{base_name}'. Duration: {elapsed_time:.2f} seconds."
-    )
+    # logging.info(
+    #     f"Finished transcribing '{base_name}'. Duration: {elapsed_time:.2f} seconds."
+    # )
 
     return output["text"]
+
+
+
+def convert_to_wav(input_file_path, output_file_path):
+    """
+    Converts an audio file to WAV format using FFmpeg.
+
+    Args:
+        input_file_path (str): Path to the input audio file.
+        output_file_path (str): Path where the output WAV file will be saved.
+    """
+    ffmpeg_command = [
+        "ffmpeg",
+        "-i", input_file_path,
+        "-acodec", "pcm_s16le",  # PCM 16-bit little-endian codec
+        "-ar", "44100",  # Sampling rate
+        "-ac", "1",  # Number of audio channels
+        output_file_path
+    ]
+
+    subprocess.run(ffmpeg_command, check=True)
 
 
 def parse_content_files(
@@ -355,19 +377,38 @@ def parse_content_files(
         audio_file_path = content["audio"]
 
         if audio_file_path:
+            # audio = zip_file.read(audio_file_path)
+
+
             with TemporaryDirectory() as temp_dir:
-                local_audio_path = os.path.join(
-                    temp_dir, os.path.basename(audio_file_path)
+                _, ext = os.path.splitext(audio_file_path)
+
+                if ext.lower() not in [".mp3", ".flac", ".wav"]:
+                    # If the file is not in one of the accepted formats, convert it to WAV
+                    local_audio_path = os.path.join(temp_dir, os.path.basename(audio_file_path) + ".wav")
+                    with zip_file.open(audio_file_path) as audio_file:
+                        with open(local_audio_path, "wb") as out_file:
+                            out_file.write(audio_file.read())
+
+                    # Convert the file to WAV format
+                    convert_to_wav(local_audio_path, local_audio_path)
+                else:
+                    # If the file is already in an accepted format, just extract it
+                    local_audio_path = os.path.join(temp_dir, os.path.basename(audio_file_path))
+                    with zip_file.open(audio_file_path) as audio_file, open(local_audio_path, "wb") as out_file:
+                        out_file.write(audio_file.read())
+
+                output = pipe(
+                    local_audio_path,
+                    chunk_length_s=30,
+                    batch_size=4,
+                    return_timestamps=False,
                 )
 
-                with zip_file.open(audio_file_path, "r") as audio_file, open(
-                    local_audio_path, "wb"
-                ) as out_file:
-                    out_file.write(audio_file.read())
-                    print(out_file)
+                print(output)
 
-                transcription = transcribe(local_audio_path, pipe)
-                print(transcription)
+
+
         break
 
 
@@ -387,6 +428,7 @@ def main():
         )
 
         for f in pptx_files:
+
             # Get name of ppt presentation
             pptx_name = os.path.splitext(os.path.basename(f))[0]
             logging.info(f"Processing '{pptx_name}'...")
@@ -395,17 +437,12 @@ def main():
             zip_file = ZipFile(f, "r")
             content_file_paths = get_content_file_paths_from_zip(zip_file)
 
+            # Extract text from all the relevant files
             slides_text = parse_content_files(zip_file, content_file_paths, pipe)
-            break
-
-            # # Transcribe it
-            # transcription = transcribe_pptx(f, pipe)
-
-            # # Save the combined text to a folder in the output directory named after the ppt presentation
-            # save_transcription(args.output_dir, pptx_name, transcription)
+            print(slides_text)
 
     except Exception as e:
-        logging.error(e)
+        logging.error(f"Error: {e}")
 
 
 if __name__ == "__main__":
