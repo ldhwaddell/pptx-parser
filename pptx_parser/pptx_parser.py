@@ -310,8 +310,3 @@ class PptxParser:
         )
 
         return slide_text
-
-
-# p = PptxParser("./powerpoints", recursive=True, )
-
-# p.parse()
