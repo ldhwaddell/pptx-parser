@@ -30,8 +30,9 @@ class PptxParser:
     :param recursive: A boolean indicating whether the search should be recursive, default is False.
     """
 
-    def __init__(self, dir: str, recursive: bool = False) -> None:
+    def __init__(self, dir: str, save_images_dir: str, recursive: bool = False) -> None:
         self.dir = dir
+        self.save_images_dir = save_images_dir
         self.recursive = recursive
         self.pipe = None
 
@@ -212,8 +213,10 @@ class PptxParser:
                 )
 
             # Get images
-            if image_file_paths:
-                pass
+            if image_file_paths and self.save_images_dir:
+                pptx_content[slide_name]["image_paths"] = self.__save_images(
+                    slide_name, image_file_paths, zip_file
+                )
 
             # Get slide text content
             pptx_content[slide_name]["slide_text"] = self.__parse_slide(
@@ -294,6 +297,11 @@ class PptxParser:
         logging.info(f"Finished transcribing. Duration: {elapsed_time:.2f} seconds.")
 
         return output["text"]
+
+    def __save_images(
+        self, slide_name: str, image_file_paths: List[str], zip_file: ZipFile
+    ) -> List[str]:
+        pass
 
     def __parse_slide(self, slide_file_path: str, zip_file: ZipFile) -> str:
         """

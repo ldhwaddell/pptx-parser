@@ -44,3 +44,8 @@ cli.add_argument(
 
 parser = PptxParser(dir=cli.dir, recursive=cli.recursive)
 parser.parse()
+
+
+# parser = PptxParser(dir="tests/powerpoints/image", recursive=True)
+# results = parser.parse()
+# print(results)
