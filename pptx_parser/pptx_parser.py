@@ -203,12 +203,17 @@ class PptxParser:
             pptx_content[slide_name] = {}
 
             audio_file_path = content["audio"]
+            image_file_paths = content["images"]
 
             # Get audio
             if audio_file_path:
                 pptx_content[slide_name]["transcription"] = self.__parse_audio_file(
                     audio_file_path, zip_file
                 )
+
+            # Get images
+            if image_file_paths:
+                pass
 
             # Get slide text content
             pptx_content[slide_name]["slide_text"] = self.__parse_slide(
@@ -259,7 +264,12 @@ class PptxParser:
                 audio = BytesIO(zip_file.read(audio_path))
 
                 # Convert the file to WAV format
-                AudioSegment.from_file(audio).export(local_audio_path, format="wav")
+                result = AudioSegment.from_file(audio).export(
+                    local_audio_path, format="wav"
+                )
+
+                # Explicitly close
+                result.close()
 
             # If the file is already in an accepted format, just extract it
             else:
