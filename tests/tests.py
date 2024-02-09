@@ -8,31 +8,43 @@ from contextlib import redirect_stdout
 
 class Test(unittest.TestCase):
 
-    def test_get_pptx_files(self):
-        parser = PptxParser(dir="tests/powerpoints", recursive=False)
-        # Redirect stdout to suppress print output
+    @classmethod
+    def setUpClass(cls):
+        parser_pptx = PptxParser(dir="tests/powerpoints/pptx", recursive=True)
+        parser_image = PptxParser(dir="tests/powerpoints/image", recursive=True)
+        parser_audio = PptxParser(dir="tests/powerpoints/audio", recursive=True)
+
+        # Redirect output to suppress print
         with io.StringIO() as buf, redirect_stdout(buf):
-            result = parser._PptxParser__get_pptx_files()
-            self.assertEqual(len(result), 2)
+            cls.parser_pptx_results = parser_pptx.parse()
+            cls.parser_image_results = parser_image.parse()
+            cls.parser_audio_results = parser_audio.parse()
 
-    def test_get_pptx_files_recursive(self):
-        parser = PptxParser(dir="tests/powerpoints", recursive=True)
+    def test_parse_pptx(self):
+        # Ensure 1 ppt was found
+        self.assertEqual(len(self.parser_pptx_results), 1)
 
-        with io.StringIO() as buf, redirect_stdout(buf):
-            result = parser._PptxParser__get_pptx_files()
-            self.assertEqual(len(result), 3)
+    def test_parse_pptx_slides(self):
+        # Ensure both slides and title were found
+        self.assertEqual(len(self.parser_pptx_results[0].keys()), 3)
 
-    def test_get_pptx_files_bad_path(self):
-        parser = PptxParser(dir="nonexistent_directory")
+    def test_parse_pptx_text(self):
+        # Ensure text properly extracted
+        slide1 = self.parser_pptx_results[0]["slide1"]
+        slide2 = self.parser_pptx_results[0]["slide2"]
 
-        with self.assertRaises(NotADirectoryError):
-            parser._PptxParser__get_pptx_files()
+        self.assertEqual(slide1["slide_text"], "Title Subtitle")
+        self.assertEqual(slide2["slide_text"], "Slide Title 1 2")
 
-    def test_get_pptx_files_empty_path(self):
-        parser = PptxParser(dir="tests/powerpoints/empty_dir")
+    # def test_parse_pptx_images(self):
+    #     # Ensure images are properly found
+    #     print(self.parser_image_results)
 
-        with self.assertRaises(FileNotFoundError):
-            parser._PptxParser__get_pptx_files()
+    def test_parse_pptx_audio(self):
+        # Ensure audio is properly transcribed
+        slide2 = self.parser_audio_results[0]["slide2"]
+
+        self.assertEqual(slide2["transcription"], " This is a test.")
 
 
 # Run the tests
