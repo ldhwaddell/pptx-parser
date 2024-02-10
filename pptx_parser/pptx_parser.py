@@ -249,8 +249,13 @@ class PptxParser:
 
         :return: The transcribed text from the audio file.
         """
+        start_time = time.time()
+
         # Import necessary library and create pipe if not already done
         if not self.pipe:
+            logging.info("Building transcription pipe...")
+            start_pipe_time = time.time()
+
             from torch import float16
             from transformers import pipeline
 
@@ -261,8 +266,10 @@ class PptxParser:
                 device="mps",
                 model_kwargs={"attn_implementation": "sdpa"},
             )
-
-        start_time = time.time()
+            elapsed_pipe_time = time.time() - start_pipe_time
+            logging.info(
+                f"Finished building transcription pipe. Duration: {elapsed_pipe_time:.2f} seconds."
+            )
 
         with TemporaryDirectory() as temp_dir:
             _, ext = os.path.splitext(audio_path)
@@ -327,9 +334,8 @@ class PptxParser:
         """
 
         # Ensure directory for the powerpoint's images exists
-        pptx_dir_path = os.path.join(
-            self.save_images_dir, os.path.basename(zip_file.filename)
-        )
+        pptx_dir_name, _ = os.path.splitext(os.path.basename(zip_file.filename))
+        pptx_dir_path = os.path.join(self.save_images_dir, pptx_dir_name)
         os.makedirs(pptx_dir_path, exist_ok=True)
 
         # Create folder for each slide with images
