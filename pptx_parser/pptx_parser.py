@@ -31,10 +31,15 @@ class PptxParser:
     """
 
     def __init__(
-        self, dir: str, save_images_dir: str = None, recursive: bool = False
+        self,
+        dir: str,
+        save_images_dir: str = "",
+        transcribe_audio: bool = False,
+        recursive: bool = False,
     ) -> None:
         self.dir = dir
         self.save_images_dir = save_images_dir
+        self.transcribe_audio = transcribe_audio
         self.recursive = recursive
         self.pipe = None
 
@@ -51,6 +56,11 @@ class PptxParser:
         """
 
         try:
+
+            # Ensure output directory exists.
+            if self.save_images_dir:
+                os.makedirs(self.save_images_dir, exist_ok=True)
+
             pptx_files = self.__get_pptx_files()
             all_pptx_content = []
             for f in pptx_files:
@@ -162,8 +172,10 @@ class PptxParser:
         slide_files = {}
         for rel_file in (f for f in files if f.startswith(rels_dir)):
             # Add entry in dict
-            slide_path = os.path.join("ppt", "slides", self.__format_slide_name(rel_file))
-            # assert slide_path == test
+            slide_path = os.path.join(
+                "ppt", "slides", self.__format_slide_name(rel_file)
+            )
+
             slide_files[slide_path] = {"audio": None, "images": []}
 
             # Read xml and convert to tree
@@ -176,11 +188,12 @@ class PptxParser:
             ):
                 rel_type = rel.get("Type")
 
-                if "relationships/audio" in rel_type:
+                if self.transcribe_audio and "relationships/audio" in rel_type:
                     target = rel.get("Target").replace("../", "ppt/")
                     slide_files[slide_path]["audio"] = target
 
-                elif "relationships/image" in rel_type:
+                # If user wants to save images and images found
+                elif self.save_images_dir and "relationships/image" in rel_type:
                     target = rel.get("Target").replace("../", "ppt/")
                     slide_files[slide_path]["images"].append(target)
 
@@ -192,12 +205,12 @@ class PptxParser:
         content_files: Dict[str, Dict[str, Optional[List[str]]]],
     ) -> Dict[str, Dict[str, str]]:
         """
-        Parses contents of pptx from ZIP file, extracting transcriptions for audio files and text from slides.
+        Parses contents of pptx from ZIP file, extracting transcriptions for audio files and text from slides. Extracts and saves images if requested
 
         :param zip_file (ZipFile):  ZipFile object for pptx
         :param content_files (Dict[str, Dict[str, Optional[List[str]]]]): Dict mapping slide paths to their content
 
-        :return Dict[str, Dict[str, str]]: Dict with the text and optionally transcription audio
+        :return: Dict with the text and optionally transcription audio
         """
         pptx_content = {}
 
@@ -215,7 +228,7 @@ class PptxParser:
                 )
 
             # Get images
-            if image_file_paths and self.save_images_dir:
+            if image_file_paths:
                 pptx_content[slide_name]["image_paths"] = self.__save_images(
                     slide_name, image_file_paths, zip_file
                 )
@@ -302,9 +315,49 @@ class PptxParser:
     def __save_images(
         self, slide_name: str, image_file_paths: List[str], zip_file: ZipFile
     ) -> List[str]:
+        """
+        Extracts and saves images from a ZIP archive to a directory structure based on PowerPoint slide names.
 
-        # Make directory if it does not exist
-        os.makedirs(self.save_images_dir, exist_ok=True)
+
+        :param slide_name (str): The name of the slide to which the images belong
+        :param image_file_paths (List[str]): A list of image paths within the ZIP archive
+        :param zip_file (ZipFile): A ZipFile object representing the ZIP archive containing the PowerPoint file.
+
+        :return: A list of the paths of the saved images
+        """
+
+        # Ensure directory for the powerpoint's images exists
+        pptx_dir_path = os.path.join(
+            self.save_images_dir, os.path.basename(zip_file.filename)
+        )
+        os.makedirs(pptx_dir_path, exist_ok=True)
+
+        # Create folder for each slide with images
+        slide_dir_path = os.path.join(pptx_dir_path, f"{slide_name}_images")
+        os.makedirs(slide_dir_path, exist_ok=True)
+
+        saved_image_paths = []
+
+        for f in image_file_paths:
+            image_basename = os.path.basename(f)
+            target_path = os.path.join(slide_dir_path, image_basename)
+
+            try:
+                # # Stream the image content directly to the target file
+                with zip_file.open(f, "r") as image_file, open(
+                    target_path, "wb"
+                ) as new_image_file:
+
+                    # Write the image in chunks until empty byte string found
+                    for chunk in iter(lambda: image_file.read(4096), b""):
+                        new_image_file.write(chunk)
+
+                saved_image_paths.append(target_path)
+                logging.info(f"Saved image: {target_path}")
+            except Exception as e:
+                logging.error(f"Failed to save image {image_basename}: {e}")
+
+        return saved_image_paths
 
     def __parse_slide(self, slide_file_path: str, zip_file: ZipFile) -> str:
         """
