@@ -1,9 +1,9 @@
 import io
 import unittest
 
-from pptx_parser.pptx_parser import PptxParser
-
 from contextlib import redirect_stdout
+
+from pptx_parser.pptx_parser import PptxParser
 
 
 class Test(unittest.TestCase):
@@ -74,7 +74,6 @@ class Test(unittest.TestCase):
 
     def test_parse_pptx_audio(self):
         # Ensure audio is properly transcribed
-        print(self.parser_audio_results)
         slide2 = self.parser_audio_results[0]["slide2"]
 
         self.assertEqual(slide2["transcription"], " This is a test.")
