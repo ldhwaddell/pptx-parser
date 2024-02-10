@@ -30,7 +30,9 @@ class PptxParser:
     :param recursive: A boolean indicating whether the search should be recursive, default is False.
     """
 
-    def __init__(self, dir: str, save_images_dir: str, recursive: bool = False) -> None:
+    def __init__(
+        self, dir: str, save_images_dir: str = None, recursive: bool = False
+    ) -> None:
         self.dir = dir
         self.save_images_dir = save_images_dir
         self.recursive = recursive
@@ -160,7 +162,8 @@ class PptxParser:
         slide_files = {}
         for rel_file in (f for f in files if f.startswith(rels_dir)):
             # Add entry in dict
-            slide_path = f"ppt/slides/{self.__format_slide_name(rel_file)}"
+            slide_path = os.path.join("ppt", "slides", self.__format_slide_name(rel_file))
+            # assert slide_path == test
             slide_files[slide_path] = {"audio": None, "images": []}
 
             # Read xml and convert to tree
@@ -193,7 +196,6 @@ class PptxParser:
 
         :param zip_file (ZipFile):  ZipFile object for pptx
         :param content_files (Dict[str, Dict[str, Optional[List[str]]]]): Dict mapping slide paths to their content
-        :param pipe (Pipeline): Pipeline for audio
 
         :return Dict[str, Dict[str, str]]: Dict with the text and optionally transcription audio
         """
@@ -231,7 +233,6 @@ class PptxParser:
 
         :param audio_path (str): The path of the audio file within the ZIP archive.
         :param zip_file (ZipFile): A ZipFile object representing the ZIP archive containing the PowerPoint file.
-        :param pipe (Pipeline): A transcription pipeline used for processing the audio file.
 
         :return: The transcribed text from the audio file.
         """
@@ -301,7 +302,9 @@ class PptxParser:
     def __save_images(
         self, slide_name: str, image_file_paths: List[str], zip_file: ZipFile
     ) -> List[str]:
-        pass
+
+        # Make directory if it does not exist
+        os.makedirs(self.save_images_dir, exist_ok=True)
 
     def __parse_slide(self, slide_file_path: str, zip_file: ZipFile) -> str:
         """
