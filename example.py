@@ -1,51 +1,20 @@
 from pptx_parser import PptxParser
 
 # Search directory
-parser = PptxParser(dir="./powerpoints", recursive=True)
+parser = PptxParser(dir="./powerpoints")
 parser.parse()
 
 
 # Recursively search directory
-recursive_parser = PptxParser(dir="./powerpoints", recursive=False)
+recursive_parser = PptxParser(dir="./powerpoints", recursive=True)
 recursive_parser.parse()
 
+# Transcribe audio
+audio_parser = PptxParser(dir="./powerpoints", transcribe_audio=True, recursive=True)
+audio_parser.parse()
 
-# Output results to file
-parser = PptxParser(dir="./powerpoints", recursive=True)
-parser.parse()
-
-
-# As a CLI
-from argparse import ArgumentParser, BooleanOptionalAction
-
-# Set up arg parser
-cli = ArgumentParser(description="Parse .pptx files")
-
-# Define CLI inputs
-cli.add_argument(
-    "--dir",
-    required=True,
-    type=str,
-    help="Directory where the PowerPoint files are located.",
+# Save images
+image_parser = PptxParser(
+    dir="./powerpoints", save_images_dir="./output", recursive=True
 )
-cli.add_argument(
-    "--output-dir",
-    required=False,
-    type=str,
-    help="Directory where the transcriptions will be saved.",
-)
-
-cli.add_argument(
-    "--recursive",
-    required=False,
-    action=BooleanOptionalAction,
-    help="Specify if you want to recursively search dir",
-)
-
-parser = PptxParser(dir=cli.dir, recursive=cli.recursive)
-parser.parse()
-
-
-# parser = PptxParser(dir="tests/powerpoints/image", recursive=True)
-# results = parser.parse()
-# print(results)
+audio_parser.parse()
